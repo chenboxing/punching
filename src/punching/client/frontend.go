@@ -1,17 +1,13 @@
 package client
 
 import (
-	"crypto/md5"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"os"
+	. "punching/constant"
 	"sync"
 	"time"
+	"punching/util"
 )
 
 var ListenAcceptMap map[string]net.Conn
@@ -19,34 +15,26 @@ var ExitChanMap map[string]chan bool
 
 var RWLock *sync.RWMutex
 
-//生成32位md5字串
-func GetMd5String(s string) string {
-	h := md5.New()
-	h.Write([]byte(s))
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-//生成Guid字串
-func UniqueId() string {
-	b := make([]byte, 48)
-
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return ""
-	}
-	return GetMd5String(base64.URLEncoding.EncodeToString(b))
-}
 
 func handleClientConn(source net.Conn) {
 
-	// 32位唯一码
-	uniqueid := UniqueId()
-	log.Println("Enter handleClientConn:", uniqueid)
+	// 4 bits unique session id
+	var sessionID string
+	for{
+		RWLock.Lock()
+		sessionID = util.GenerateRandomPairKey()
+		if _, ok := ListenAcceptMap[sessionID]; !ok{
+			break
+		}
+		RWLock.Unlock()
+	}
+	log.Println("Enter handleClientConn:", sessionID)
 
 	RWLock.Lock()
-	ListenAcceptMap[uniqueid] = source
-	ExitChanMap[uniqueid] = make(chan bool)
+	ListenAcceptMap[sessionID] = source
+	ExitChanMap[sessionID] = make(chan bool)
 	RWLock.Unlock()
-	log.Println("建立Map", uniqueid)
+	log.Println("建立Map", sessionID)
 
 	defer func() {
 
@@ -55,9 +43,9 @@ func handleClientConn(source net.Conn) {
 			log.Println("关闭Sourcer失败")
 		}
 		RWLock.Lock()
-		delete(ListenAcceptMap, uniqueid)
-		delete(ExitChanMap, uniqueid)
-		log.Println("删除map", uniqueid)
+		delete(ListenAcceptMap, sessionID)
+		delete(ExitChanMap, sessionID)
+		log.Println("删除map", sessionID)
 		RWLock.Unlock()
 
 	}()
@@ -75,18 +63,18 @@ func handleClientConn(source net.Conn) {
 				log.Println("读取Source源连接出错，原因为：", err.Error())
 
 				//发送控制
-				pack01 := Packet(uniqueid, "01", []byte(""))
-				Wch <- pack01
+				packQuit := util.PackageNat(PAIR_CONTROL_QUIT, [4]byte(sessionID),[]byte("") )
+				Wch <- packQuit
 				return
 			}
 
-			controlID := "00"
+			controlID :=  PAIR_CONTROL_NORMAL
 			if flag == 0 {
 				// 第一次
-				controlID = "11"
+				controlID = PAIR_CONTROL_FIRST
 				flag = 1
 			}
-			pack := Packet(uniqueid, controlID, buf[0:len01])
+			pack :=  util.PackageNat(controlID, [4]byte(sessionID), buf[0:len01])
 			Wch <- pack
 
 		}
@@ -94,7 +82,7 @@ func handleClientConn(source net.Conn) {
 	}()
 
 	select {
-	case <-ExitChanMap[uniqueid]:
+	case <-ExitChanMap[sessionID]:
 		log.Println("需要退出Accept")
 		return
 	}
@@ -108,6 +96,7 @@ func ClientListenHandle() {
 	RWLock = new(sync.RWMutex)
 
 	addrOn := Config.Dial
+
 	l, err := net.Listen("tcp", addrOn)
 	if err != nil {
 		fmt.Println("listen ", addrOn, " error:", err)
@@ -128,45 +117,39 @@ func ClientListenHandle() {
 			go handleClientConn(c)
 		}
 	}()
-
-	select {
-	case <-Dch:
-		os.Exit(3)
-	}
-
 }
 
 // 读取目标流到源
 func handleReadConn() {
 	for {
 		select {
-		case r := <-Rch:
+		case pact := <-Rch:
 
 			log.Println(time.Now().UnixNano(), "handleReadConn准备处理")
 			// 获取src
-			controlid := r.ControlID
-			uniqueid := r.Key
-			data := r.Data
+			controlID := pact.ControlID
+			sessionID := string(pact.SessionID)
+			data := pact.Data
 
-			log.Println("读取Nat包：handleReadConn", uniqueid, "长度为", len(data))
+			log.Println("读取Nat包：handleReadConn", sessionID, "长度为", len(data))
 
 			//退出
-			if controlid == "01" {
-				if c, ok := ExitChanMap[uniqueid]; ok {
+			if controlID == PAIR_CONTROL_QUIT {
+				if c, ok := ExitChanMap[sessionID]; ok {
 					log.Println("发送退出信号")
 					c <- true
 				} else {
-					log.Println("在ExitChanMap里找不到Key为:", uniqueid)
+					log.Println("在ExitChanMap里找不到Key为:", sessionID)
 				}
 			} else {
-				if src, ok := ListenAcceptMap[uniqueid]; ok {
+				if src, ok := ListenAcceptMap[sessionID]; ok {
 					len2, err2 := src.Write(data)
 					if err2 != nil || len2 <= 0 {
 						log.Println("源写入出错", err2.Error())
 					}
 					log.Println(time.Now().UnixNano(), "源写入:", len2)
 				} else {
-					log.Println("在Map里找不到Key为:", uniqueid)
+					log.Println("在Map里找不到Key为:", sessionID)
 				}
 
 			}

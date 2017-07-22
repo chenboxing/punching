@@ -15,8 +15,13 @@ func Main() {
 		return
 	}
 
-	proxyAddr := Config.Dial || ThirdConfig.Address
+	// Proxy Server Address
+	proxyAddr := Config.Dial
+	if proxyAddr == "" {
+		proxyAddr = ThirdConfig.Address
+	}
 	pairName := Config.Key
+
 
 	// 如果跟Peer连接出错，要重新连接Proxy
 	for {

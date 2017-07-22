@@ -5,23 +5,10 @@ import (
 	"sync"
 	"fmt"
 	"punching/util"
-	"punching/logger"
 	"time"
-	"punching/const"
+	. "punching/constant"
+	"log"
 )
-
-const (	
-	PROXY_FIRST_HEAD byte = 'P'     //包头标识
-	ROLE_SERVER byte =  1           //服务端
-	ROLE_CLIENT byte =  2           //客户端
-	PROXY_RESP_NO_SERVER  = "no_server_partner"  // 代理响应-服务端还没有启用
-	PROXY_RESP_CLIENT_EXIST  = "client_existed"  // 代理响应-客户端已经存在了
-	PROXY_RESP_ERR_SERVER_EXIST  = "server_existed"  // 代理响应-客户端已经存在了
-	
-	CLIENT_RESP_ACK  byte = 1 
-    SERVER_RESP_ACK  byte = 1	
-)
-
 
 // ServerConn 服务端到代理端连接
 type ServerConn struct {
@@ -40,10 +27,10 @@ type ClientConn struct{
 
 // 全局变量
 var (
-	OnlineServerList  map[string]ServerConn   // 服务端连接列表Map
-	OnlineClientList  map[string]ClientConn   // 客户端连接列表Map
-	RWLockClient  sync.RWMutex                //读写锁
-	RWLockServer  sync.RWMutex
+	OnlineServerList  map[string]*ServerConn   // 服务端连接列表Map
+	OnlineClientList  map[string]*ClientConn   // 客户端连接列表Map
+	RWLockClient  *sync.RWMutex                //读写锁
+	RWLockServer  *sync.RWMutex
 )
 
 func Main(){
@@ -54,14 +41,14 @@ func Main(){
 		return 
 	}
 
-
-	OnlineServerList = make(map[string]ServerConn)
-	OnlineClientList = make(map[string]ClientConn)
+	OnlineServerList = make(map[string]*ServerConn)
+	OnlineClientList = make(map[string]*ClientConn)
 
 	RWLockClient = new(sync.RWMutex)
 	RWLockServer = new(sync.RWMutex)
 
-	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	listenAddr := Config.Listen
+	tcpAddr, err := net.ResolveTCPAddr("tcp", listenAddr)
 	if err != nil {
 		panic(err)
 	}
@@ -87,19 +74,15 @@ func Main(){
 
 // parseFirstPackage 解析连接的第一个条
 // [1]+[1]+[4-32] (包头标识+类型+32字节的Pairname)
-func parseFirstPackage(data []byte)(pairname string, roleType int, err error){
-   if len(data) <= 6 || len(data) > 34 {
-	   err = fmt.Errorf("%s","包长度不匹配")
-	   return 
-   }
+func parseFirstPackage(data []byte)(pairName string, roleType int, err error){
 
    roleType = int(data[1])
-   if data[0] != PROXY_FIRST_HEAD ||  ( roleType != ROLE_CLIENT && roleType != ROLE_SERVER) {
+   if data[0] != PROXY_PACKAGE_HEAD ||  ( roleType != ROLE_CLIENT && roleType != ROLE_SERVER) {
 	   err = fmt.Errorf("%s","包内容不匹配")
 	   return 
    }
       
-   pairname = string(byte[2:]) 
+   pairName = string(byte[2:])
    
    return 
 }
@@ -184,15 +167,16 @@ func Handler(conn net.Conn) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Println("连接出现问题:%s",r.Error())
+			fmt.Printf("连接出现问题:%s",r)
 		}
 	}()	
 
 	defer conn.Close()
 	
 	buf := make([]byte, 1024)
-	var uid string
-	var C *OnlineServerSide
+
+	var pairName string
+	var C *ServerConn
 
 	// 确定连接类型，判断是否是有效的连接,
 	// 对于客户端，需满足
@@ -211,43 +195,53 @@ func Handler(conn net.Conn) {
 		}
 
 		//获取匹配名称和连接类型（服务端或客户端)
-		pairname, roleType, err := parseFirstPackage(buf[0:i])
+		pairName, roleType, err := parseFirstPackage(buf[0:i])
 		if err != nil {
 			return 
 		}
-		
+
 		// 处理客户端连接
 		if roleType == ROLE_CLIENT{
 			processRoleClient(conn)
 			return  // 退出客户端连接			
 		}
-		
-		
-		
-			
-			
-			break 		
-			
-		
+		break
 	}
-
 
 	// 下面的操作都是针对服务端连接
-			// 是否存在pair name
-	RWLockServer.RLock()			 
-	_, ok := OnlineServerList[pairname]
-	RWLockServer.RUnlock()
 
-	// 已存在
-	if ok {
-		conn.Write([]byte(PROXY_RESP_ERR_SERVER_EXIST))	
-		return 	
+	// 服务端连接允许匹配码为空，系统将随机产生唯一匹配码
+	if pairName == ""{
+		for{
+			pairName = util.GenerateRandomPairKey()
+			RWLockServer.Lock()
+			if _, ok := OnlineServerList[pairName]; !ok {
+				break;
+			}
+			RWLockServer.Unlock()
+		}
+	}else{
+
+		// 是否存在pair name
+		RWLockServer.RLock()
+		_, ok := OnlineServerList[pairName]
+		RWLockServer.RUnlock()
+
+		// 已存在
+		if ok {
+			errPack := util.PackageProxy(PROXY_CONTROL_ERROR_SERVER_EXIST, []byte(""))
+			conn.Write(errPack)
+			fmt.Printf("服务端列表中已存在:%s", pairName)
+			return
+		}
+
 	}
+
 
 	// 生成服务器连接对象添加到列表
 	RWLockServer.Lock()
-	serverConn := &ServerConn{Rch: make(chan []byte), Wch: make(chan []byte), Pairname: pairname, LocalAddr: conn.LocalAddr}
-	OnlineServerList[pairname] = serverConn
+	serverConn := &ServerConn{Rch: make(chan []byte), Wch: make(chan []byte), Pairname: pairName, LocalAddr: conn.LocalAddr().String()}
+	OnlineServerList[pairName] = serverConn
 	RWLockServer.Unlock()
 
 	//	写通道
