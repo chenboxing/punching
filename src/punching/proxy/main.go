@@ -28,7 +28,7 @@ type ClientConn struct{
 // 全局变量
 var (
 	OnlineServerList  map[string]*ServerConn   // 服务端连接列表Map
-	OnlineClientList  map[string]*ClientConn   // 客户端连接列表Map
+	OnlineClientList  map[string]string   // 客户端连接列表Map
 	RWLockClient  *sync.RWMutex                //读写锁
 	RWLockServer  *sync.RWMutex
 )
@@ -42,7 +42,7 @@ func Main(){
 	}
 
 	OnlineServerList = make(map[string]*ServerConn)
-	OnlineClientList = make(map[string]*ClientConn)
+	OnlineClientList = make(map[string]string)
 
 	RWLockClient = new(sync.RWMutex)
 	RWLockServer = new(sync.RWMutex)
@@ -72,90 +72,82 @@ func Main(){
 	}
 }
 
-// parseFirstPackage 解析连接的第一个条
-// [1]+[1]+[4-32] (包头标识+类型+32字节的Pairname)
-func parseFirstPackage(data []byte)(pairName string, roleType int, err error){
-
-   roleType = int(data[1])
-   if data[0] != PROXY_PACKAGE_HEAD ||  ( roleType != ROLE_CLIENT && roleType != ROLE_SERVER) {
-	   err = fmt.Errorf("%s","包内容不匹配")
-	   return 
-   }
-      
-   pairName = string(byte[2:])
-   
-   return 
-}
-
 // processRoleClient 处理客户端连接
-func processRoleClient(conn net.Conn，pairname string ){
+func processRoleClient(conn net.Conn, pairName string ){
 
 	// 判断匹配的服务端是否已经注册
 	RWLockServer.RLock()	 
-	serverConn,ok := OnlineServerList[pairname]
+	serverConn,ok := OnlineServerList[pairName]
 	RWLockServer.RUnlock()
 
 	if !ok {
 		// 客户端没有注册
-		conn.Write([]byte(PROXY_RESP_NO_SERVER))
+		packErr := util.PackageProxy(PROXY_CONTROL_ERROR_NO_SERVER, []byte(""))
+		conn.Write(packErr)
 		return 
 	}
 
+	// Check the client with the save pair name exists
 	RWLockClient.RLock()
-	ok, _ := OnlineClientList[pairname]
+	_, ok = OnlineClientList[pairName]
 	RWLockClient.RUnlock()
 
 	if !ok{
-		conn.Write([]byte(PROXY_RESP_CLIENT_EXIST))
+		packErr := util.PackageProxy(PROXY_CONTROL_ERROR_CLIENT_EXIST,[]byte(""))
+		conn.Write(packErr)
 		return 
 	}
 
 	// 添加到客户端列表
 	RWLockClient.Lock()
-	OnlineClientList[pairname] = pairname
+	OnlineClientList[pairName] = pairName
 	RWLockClient.Unlock()
-	
-	// byteNat := bytes.NewBuffer(nil)
- 	// byteNat.write([]byte())
-	//  result.Bytes()
-	 
-	
-	// 发送Nat地址和接收确认
-	toClientAddrs :=  serverConn.LocalAddr + "," + conn.LocalAddr	
-	conn.Write(byte[]{toClientAddrs})
 
-	buf := make([]byte, 128)
+	// 发送Nat地址和接收确认
+	toClientAddrs :=  serverConn.LocalAddr + "," + conn.LocalAddr().String()
+
+	pack := util.PackageProxy(PROXY_CONTROL_NORMAL, []byte(toClientAddrs))
+	conn.Write(pack)
+
+	buf := make([]byte, 512)
 	lenAck, err := conn.Read(buf)
 
-	flag := 0 
+	if err != nil {
+		fmt.Println("读客户端确认数据出错")
+		return
+	}
 
-    if buf[0] == CLIENT_RESP_ACK {
+	ackPack := util.UnpackageProxy(buf[0:lenAck])
+	flag := 0
+    if ackPack.CotnrolID == PROXY_CONTROL_HEARTBITACK {
 		flag += 1
 	}
 	
-	toServerAddrs :=  conn.LocalAddr + "," + serverConn.LocalAddr
-	serverSide.Wch <- toServerAddrs
+	toServerAddrs :=  conn.LocalAddr().String() + "," + serverConn.LocalAddr
+	addrPack := util.PackageProxy(PROXY_CONTROL_NORMAL, []byte(toServerAddrs))
+	serverConn.Wch <-  addrPack
 
 	// 等待服务端的确认数据
 	select {
-		case bufAck :=  <- serverSide.Rch
-		if bufAck[0] == SERVER_RESP_ACK {
-			flag += 1 
-			break 
-		}				
+		case bufAck :=  <- serverConn.Rch:
+			pack := util.UnpackageProxy(bufAck)
+			if pack.CotnrolID == PROXY_CONTROL_HEARTBITACK {
+				flag += 1
+			}
+			break
 	}
 
 	// 收到服务端的确认数据
 	if flag == 2 {
 		RWLockServer.Lock()
 		serverConn.Dch <- true   // 关闭服务端连接
-		delete( OnlineServerList, pairname)
+		delete( OnlineServerList, pairName)
 		RWLockServer.Unlock()
 	}
 
 
 	RWLockClient.Lock()
-	delete( OnlineClientList, pairname)
+	delete( OnlineClientList, pairName)
 	RWLockClient.Unlock()
 		
 	return 
@@ -169,10 +161,9 @@ func Handler(conn net.Conn) {
 		if r := recover(); r != nil {
 			fmt.Printf("连接出现问题:%s",r)
 		}
-	}()	
+	}()
 
 	defer conn.Close()
-	
 	buf := make([]byte, 1024)
 
 	var pairName string
@@ -187,22 +178,23 @@ func Handler(conn net.Conn) {
 	
 	
 	for {
-
 		i, err := conn.Read(buf)
 		if err != nil {
 			fmt.Println("读取数据错误:", err.Error())
 			return 
 		}
 
-		//获取匹配名称和连接类型（服务端或客户端)
-		pairName, roleType, err := parseFirstPackage(buf[0:i])
-		if err != nil {
-			return 
+		firstPack := util.UnpackageProxy(buf[0:i])
+
+		clientType := firstPack.Data[0]
+		var pairName string
+		if len(firstPack.Data) >1 {
+			pairName = string(firstPack.Data[1:])
 		}
 
 		// 处理客户端连接
-		if roleType == ROLE_CLIENT{
-			processRoleClient(conn)
+		if clientType == ROLE_CLIENT{
+			processRoleClient(conn, pairName)
 			return  // 退出客户端连接			
 		}
 		break
@@ -279,7 +271,8 @@ func WHandler(conn net.Conn, C *ServerConn) {
 }
 
 // 读客户端数据 + 心跳检测
-func RHandler(conn net.Conn, C *ServerSide) {
+func RHandler(conn net.Conn, C *ServerConn) {
+
 	// 心跳ack
 	// 业务数据 写入Wch
 
@@ -290,27 +283,22 @@ func RHandler(conn net.Conn, C *ServerSide) {
 		if err != nil {
 			fmt.Println(err)
 		}
-		if _, derr := conn.Read(data); derr == nil {
+		if i, derr := conn.Read(data); derr == nil {
 			// 可能是来自客户端的消息确认
 			//           	     数据消息
-			fmt.Println(data)
-			if data[0] == Res {
-				fmt.Println("recv client data ack")
-			} else if data[0] == Req {
-				fmt.Println("recv client data")
-				fmt.Println(data)
-				conn.Write([]byte{Res, '#'})
-				// C.Rch <- data
+			pack := util.UnpackageProxy(data[0:i])
+			if pack.CotnrolID == PROXY_CONTROL_HEARTBITACK {
+				fmt.Println("Received hartbeat ack")//// C.Rch <- data
 			}
 
 			continue
 		}
 
 		//如果等待10秒没有读到客户端数据或读写出错，写心跳包
-
 		// 写心跳包
-		conn.Write([]byte{Req_HEARTBEAT, '#'})
-		fmt.Println("send ht packet")
+		heartPack := util.PackageProxy(PROXY_CONTROL_HEARTBIT, []byte(""))
+		conn.Write(heartPack)
+
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		if _, herr := conn.Read(data); herr == nil {
 			
@@ -326,7 +314,7 @@ func RHandler(conn net.Conn, C *ServerSide) {
 			fmt.Println("resv ht packet ack")
 		} else {
 			RWLockServer.Lock()
-			delete(OnlineServerSide, C.Pairname)
+			delete(OnlineServerList, C.Pairname)
 			RWLockServer.Unlock()
 			fmt.Println("delete user!")
 			return

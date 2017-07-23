@@ -81,10 +81,6 @@ func WHandler(conn util.NetConn) {
 	for {
 		select {
 		case msg := <-Wch:
-			// prefix := string(msg[0:2])
-			// if prefix != "00" && prefix != "01" && prefix != "11" {
-			// 	log.Println("not equal", string(msg))
-			// } else {
 			l, err := conn.Write(msg)
 			if err != nil {
 				log.Println("写到Nat目录连接出错:", err.Error())

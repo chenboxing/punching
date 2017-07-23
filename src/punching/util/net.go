@@ -114,13 +114,13 @@ func DialPeer(localAddr string, remoteAddr string) (netconn NetConn, err error) 
 				"remote address", localAddr, remoteAddr)
 			return
 		}
-		err02 := conn.Connect(util.InetAddr(remoteTCPAddr.IP.String()), remoteTCPAddr.Port)
+		err02 := conn.Connect(InetAddr(remoteTCPAddr.IP.String()), remoteTCPAddr.Port)
 		if err02 != nil {
 			log.Printf("第%d次不能连接远程服务器:%s", tryCount, err02.Error())
 			time.Sleep(1 * time.Second)
 			continue
 		} else {
-			log.Println("已经连接到peer: ", remoteAddr.String())
+			log.Println("已经连接到peer: ", remoteTCPAddr.String())
 			break
 		}
 	}

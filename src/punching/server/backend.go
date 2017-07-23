@@ -4,20 +4,15 @@ import (
 	"log"
 	"net"
 	"os"
-	"reflect"
 	"sync"
-	"unsafe"
+	"punching/util"
+	. "punching/constant"
 )
 
+var ExitChanMap map[string]chan bool
+var RWLock *sync.RWMutex
 var DialTargetMap map[string]net.Conn
 
-func b2s(buf []byte) string {
-	return *(*string)(unsafe.Pointer(&buf))
-}
-
-func s2b(s *string) []byte {
-	return *(*[]byte)(unsafe.Pointer((*reflect.SliceHeader)(unsafe.Pointer(s))))
-}
 
 func handleServerConn() {
 
@@ -25,77 +20,67 @@ func handleServerConn() {
 	ExitChanMap = make(map[string]chan bool)
 	RWLock = new(sync.RWMutex)
 
-	//var target net.Conn
-	//var err error
-	// defer func() {
-	// 	if target != nil {
-	// 		target.Close()
-	// 	}
-	// 	//source.Close()
-	// }()
-
-	var targetIP string
-	targetIP = "192.168.3.2:5901"
+	var targetAddr = Config.Dial
 	for {
 		select {
-		case r := <-Rch:
+		case pack := <-Rch:
 
 			//确定target是否存在,如果不存在，重新生成target
 
-			//分析数据包
-			log.Println("接收到数据:", len(r.Data))
 
-			controlid := r.ControlID
-			uniqueid := r.Key
-			pack := r.Data
+
+			controlID := pack.ControlID
+			sessionID := string(pack.SessionID)
+			data := pack.Data
 
 			//log.Println("读取Nat接收包：handleReadConn", string(r[0:34]), "长度为", len(r))
 
-			if controlid == "01" {
+			if controlID == PAIR_CONTROL_QUIT {
 
 				RWLock.RLock()
 
-				if c, ok := ExitChanMap[uniqueid]; ok {
+				if c, ok := ExitChanMap[sessionID]; ok {
 					log.Println("发送退出信号")
 					c <- true
 				} else {
-					log.Println("在ExitChanMap里找不到Key为:", uniqueid)
+					log.Println("在ExitChanMap里找不到Key为:", sessionID)
 				}
 				RWLock.RUnlock()
 				break
 			}
 
 			//第一次
-			if controlid == "11" {
-				log.Println("准备连接:", targetIP)
-				target, err := net.Dial("tcp", targetIP)
+			if controlID == PAIR_CONTROL_FIRST  {
+				log.Println("准备连接:", targetAddr)
+				target, err := net.Dial("tcp", targetAddr)
 				if err != nil {
-					log.Println("连接目标出错", targetIP)
+					log.Println("连接目标出错", targetAddr)
 					break
 				}
 
-				ExitChanMap[uniqueid] = make(chan bool)
-				DialTargetMap[uniqueid] = target
+				ExitChanMap[sessionID] = make(chan bool)
+				DialTargetMap[sessionID] = target
 
-				log.Println("连接目标成功:", targetIP)
+				log.Println("连接目标成功:", targetAddr)
 
 				_, err2 := target.Write(pack)
 				if err2 != nil {
 					log.Println("连接成功后写目标出错", err2.Error())
 					break
 				}
-				go ReadFromTarget(target, uniqueid)
+				go ReadFromTarget(target, sessionID)
 			} else {
 
-				if dialtarget, ok := DialTargetMap[uniqueid]; ok {
+				if dialtarget, ok := DialTargetMap[sessionID]; ok {
 
-					len2, err2 := dialtarget.Write(pack)
+					len2, err2 := dialtarget.Write(data)
 					log.Println("已写入:", len2)
 					if err2 != nil {
-						log.Println("写目标出错", targetIP, err2.Error())
+						log.Println("写目标出错", targetAddr, err2.Error())
+
 						//发送控制
-						pack01 := Packet(uniqueid, "01", []byte(""))
-						Wch <- pack01
+						quitPack := util.PackageNat(PAIR_CONTROL_QUIT, [4]byte(sessionID),[]byte(""))
+						Wch <- quitPack
 
 						break
 					}
@@ -114,13 +99,13 @@ func handleServerConn() {
 }
 
 // 读取目标流到源
-func ReadFromTarget(target net.Conn, uniqueid string) {
+func ReadFromTarget(target net.Conn, sessionID string) {
 	defer func() {
 		target.Close()
 
 		RWLock.Lock()
-		delete(DialTargetMap, uniqueid)
-		delete(ExitChanMap, uniqueid)
+		delete(DialTargetMap, sessionID)
+		delete(ExitChanMap, sessionID)
 		RWLock.Unlock()
 	}()
 
@@ -134,13 +119,13 @@ func ReadFromTarget(target net.Conn, uniqueid string) {
 			if err != nil || j == 0 {
 				log.Println("读取目标连接数据出错，原因为:", err.Error())
 
-				pack := Packet(uniqueid, "01", []byte(""))
+				pack := util.PackageNat(PAIR_CONTROL_QUIT, [4]byte(sessionID),[]byte(""))
 				Wch <- pack
 
 				return
 			}
 
-			pack := Packet(uniqueid, "00", buf[0:j])
+			pack := util.PackageNat(PAIR_CONTROL_NORMAL,[4]byte(sessionID), buf[0:j])
 
 			Wch <- pack
 
@@ -149,7 +134,7 @@ func ReadFromTarget(target net.Conn, uniqueid string) {
 
 	//接受到退出标识
 	select {
-	case <-ExitChanMap[uniqueid]:
+	case <-ExitChanMap[sessionID]:
 		log.Println("需要退出Accept")
 		return
 	}

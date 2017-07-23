@@ -14,6 +14,12 @@ type PairPackage struct {
 	Data      []byte  // 数据
 }
 
+type ProxyPackage struct {
+	Head  byte        // 头
+	CotnrolID byte    // 控制ID
+	Data   []byte     // 数据
+}
+
 // 跟代理解析端通讯封包 
 func PackageProxy(control byte, data []byte) []byte {
 	pack := bytes.NewBuffer(nil)
@@ -24,14 +30,14 @@ func PackageProxy(control byte, data []byte) []byte {
 }
 
 // 跟代理解析端拆包
-func UnpackageProxy(pact []byte) (control byte, data []byte) {
-	return pact[1], pact[1:]
+func UnpackageProxy(pack []byte) (ProxyPackage) {
+	return ProxyPackage{pack[0], pack[1], pack[1:]}
 }
 
 // Customize P2P data package
 // The format of package defined below:
 // head(6)+control(1)+session id(4) + data length (4) + data
-func PackageNat(control byte, sessionID [4]byte, data []byte) []byte {
+func PackageNat(control byte, sessionID string, data []byte) []byte {
 	pack := bytes.NewBuffer(nil)
 	pack.Write([]byte(PAIR_PACKAGE_HEAD)) // Head [6]byte
 	pack.Write([]byte{control})

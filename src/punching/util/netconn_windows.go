@@ -8,9 +8,18 @@ import (
 	"time"
 )
 
+
+func MAKEWORD(low, high uint8) uint32 {
+	var ret uint16 = uint16(high)<<8 + uint16(low)
+	return uint32(ret)
+}
+
+
 type NetConn struct {
 	sock syscall.Handle
 }
+
+
 
 func (hole *NetConn) Close() {
 

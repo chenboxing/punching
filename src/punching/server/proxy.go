@@ -9,13 +9,17 @@ import (
 	"strings"
 )
 var (
-	ProxyDch chan byte
+	ProxyDch chan util.ProxyPackage
 	ProxyRch chan []byte
 	ProxyWch chan []byte
 )
 
 
-func WaitForPeer(conn util.NetConn) (localAddr string, remoteAddr string,  err error) {
+
+// 等待，直到P2P客户端连入，在此期间会一直接受Proxy解析端发来的心跳包
+func WaitForPeer(conn util.NetConn) (localAddr string, remoteAddr string, pairName string, err error) {
+
+	defer conn.Close()
 
 	// 接收心跳和客户端连接确认
 	ProxyRch = make(chan []byte)
@@ -23,30 +27,28 @@ func WaitForPeer(conn util.NetConn) (localAddr string, remoteAddr string,  err e
 
 	go RProxyHandler(conn)
 
-
 	select {
-	case ret := <-ProxyDch:
-		switch ret {
+	case pack := <-ProxyDch:
+		switch pack.CotnrolID {
 		case PROXY_CONTROL_QUIT: //无法跟proxy连接
 			//关闭连接
 			err = error("出现错误")
 			break
 		case PROXY_CONTROL_NORMAL: // 获取客户端发来信息
-			localAddr = ""
-			remoteAddr = ""
-			pairName = ""
+			data := pack.Data
+			str := string(data)
+			parts := strings.Split(str,",")
+			localAddr =  parts[0]
+			remoteAddr = parts[1]
+			pairName = parts[2]
 			break
-
 		}
 		return
 	}
 }
 
+// ServerDialProxy P2P服务端连接Proxy解析
 func ServerDialProxy(proxyAddr string, pairName string) (retConn util.NetConn, err error) {
-
-	// 发第一个包
-	// 地址接收确认
-	// 心跑包接收和确认
 
 	var conn util.NetConn
 
@@ -116,21 +118,30 @@ func RProxyHandler(conn util.NetConn) {
 
 	for {
 		// 心跳包,回复ack
-		data := make([]byte, 128)
+		data := make([]byte, 512)
 		i, _ := conn.Read(data)
 		if i == 0 {
-			Dch <- true
+			ProxyDch <- util.ProxyPackage{CotnrolID:PROXY_CONTROL_QUIT}
 			return
 		}
-		if data[0] == Req_HEARTBEAT {
-			fmt.Println("recv ht pack")
-			conn.Write([]byte{Res_REGISTER, '#', 'h'})
-			fmt.Println("send ht pack ack")
-		} else if data[0] == Req { // 接收到确认信息
-			fmt.Println("recv data pack")
-			fmt.Printf("%v\n", string(data[2:]))
-			conn.Write([]byte{Res, '#'})
+
+		// Invalid package
+		pack := util.UnpackageProxy(data[0:i])
+		if pack.Head !=  PROXY_PACKAGE_HEAD {
+			ProxyDch <- util.ProxyPackage{CotnrolID:PROXY_CONTROL_QUIT}
+			return
 		}
+
+		if pack.CotnrolID == PROXY_CONTROL_HEARTBIT {
+			//  Received heartbeat package
+			// 确认
+			ackPack := util.PackageProxy(PROXY_CONTROL_HEARTBITACK, []byte(""))
+			conn.Write(ackPack)
+
+		}
+
+		ProxyDch <- pack
+
 	}
 
 }
