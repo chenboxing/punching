@@ -1,5 +1,7 @@
 package main
-import  "punching/proxy"
+
+import "punching/proxy"
+
 func main() {
 	proxy.Main()
 }

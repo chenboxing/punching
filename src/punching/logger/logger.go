@@ -1,20 +1,26 @@
-package util
+package logger
 
 import (
 	"fmt"
 
 	"github.com/cihub/seelog"
+	"os"
+	"strings"
 )
 
 // init 初始化包
 func init() {
 	// 解析服务配置文件
+	logFileName := "./log/punching.log"
+	if os.Getenv("Log_FILE") != "" {
+		logFileName = os.Getenv("Log_FILE")
+	}
 	xml := `
 	<seelog>
     <outputs formatid="main">
         <filter levels="info,critical,error,debug">
             <console formatid="main" />
-            <rollingfile formatid="main" type="date" filename="./log/punching.log" datepattern="2006.01.02" />
+            <rollingfile formatid="main" type="date" filename="#LOG_FILE_NAME#" datepattern="2006.01.02" />
         </filter>
     </outputs>
 
@@ -24,12 +30,13 @@ func init() {
 	</seelog>
 	`
 
+	xml = strings.Replace(xml, "#LOG_FILE_NAME", logFileName, 1)
 	// 解析日志配置（从默认配置）
-	logger, err := seelog.LoggerFromConfigAsBytes([]byte(xml))
+	logg, err := seelog.LoggerFromConfigAsBytes([]byte(xml))
 	if err != nil {
 		panic(fmt.Errorf("log configuration parse error: %s", err.Error()))
 	}
-	seelog.ReplaceLogger(logger)
+	seelog.ReplaceLogger(logg)
 
 }
 

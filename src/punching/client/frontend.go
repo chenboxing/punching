@@ -1,13 +1,12 @@
 package client
 
 import (
-	"fmt"
-	"log"
 	"net"
 	. "punching/constant"
+	"punching/logger"
+	"punching/util"
 	"sync"
 	"time"
-	"punching/util"
 )
 
 var ListenAcceptMap map[string]net.Conn
@@ -15,37 +14,38 @@ var ExitChanMap map[string]chan bool
 
 var RWLock *sync.RWMutex
 
-
 func handleClientConn(source net.Conn) {
 
 	// 4 bits unique session id
 	var sessionID string
-	for{
+	// Unique session id
+	for {
 		RWLock.Lock()
 		sessionID = util.GenerateRandomPairKey()
-		if _, ok := ListenAcceptMap[sessionID]; !ok{
+		_, ok := ListenAcceptMap[sessionID]
+		RWLock.Unlock()
+		if !ok {
 			break
 		}
-		RWLock.Unlock()
 	}
-	log.Println("Enter handleClientConn:", sessionID)
+	logger.Infof("Enter handleClientConn:%s", sessionID)
 
 	RWLock.Lock()
 	ListenAcceptMap[sessionID] = source
 	ExitChanMap[sessionID] = make(chan bool)
 	RWLock.Unlock()
-	log.Println("建立Map", sessionID)
+	logger.Infof("建立Map,%s", sessionID)
 
 	defer func() {
 
 		e1 := source.Close()
 		if e1 != nil {
-			log.Println("关闭Sourcer失败")
+			logger.Error("关闭Sourcer失败")
 		}
 		RWLock.Lock()
 		delete(ListenAcceptMap, sessionID)
 		delete(ExitChanMap, sessionID)
-		log.Println("删除map", sessionID)
+		logger.Infof("删除map:%s", sessionID)
 		RWLock.Unlock()
 
 	}()
@@ -60,21 +60,22 @@ func handleClientConn(source net.Conn) {
 			len01, err := source.Read(buf)
 
 			if len01 <= 0 || err != nil {
-				log.Println("读取Source源连接出错，原因为：", err.Error())
+				logger.Errorf("读取Source源连接出错，原因为：%s", err)
 
 				//发送控制
-				packQuit := util.PackageNat(PAIR_CONTROL_QUIT, [4]byte(sessionID),[]byte("") )
+				packQuit := util.PackageNat(PAIR_CONTROL_QUIT, sessionID, []byte(""))
 				Wch <- packQuit
 				return
 			}
 
-			controlID :=  PAIR_CONTROL_NORMAL
+			controlID := PAIR_CONTROL_NORMAL
 			if flag == 0 {
 				// 第一次
 				controlID = PAIR_CONTROL_FIRST
 				flag = 1
 			}
-			pack :=  util.PackageNat(controlID, [4]byte(sessionID), buf[0:len01])
+
+			pack := util.PackageNat(controlID, sessionID, buf[0:len01])
 			Wch <- pack
 
 		}
@@ -83,7 +84,7 @@ func handleClientConn(source net.Conn) {
 
 	select {
 	case <-ExitChanMap[sessionID]:
-		log.Println("需要退出Accept")
+		logger.Warn("需要退出Accept")
 		return
 	}
 }
@@ -95,14 +96,14 @@ func ClientListenHandle() {
 	ExitChanMap = make(map[string]chan bool)
 	RWLock = new(sync.RWMutex)
 
-	addrOn := Config.Dial
+	addrOn := Config.Listen
 
 	l, err := net.Listen("tcp", addrOn)
 	if err != nil {
-		fmt.Println("listen ", addrOn, " error:", err)
+		logger.Errorf("listen %s encountered errors %s", addrOn, err)
 		return
 	}
-	fmt.Println("server running at port", addrOn)
+	logger.Infof("server running at port %s", addrOn)
 
 	// 全局读取来自nat源的包
 	go handleReadConn()
@@ -111,7 +112,7 @@ func ClientListenHandle() {
 		for {
 			c, err := l.Accept()
 			if err != nil {
-				fmt.Println("accept error:", err)
+				logger.Errorf("accept error: %s", err)
 				break
 			}
 			go handleClientConn(c)
@@ -125,31 +126,30 @@ func handleReadConn() {
 		select {
 		case pact := <-Rch:
 
-			log.Println(time.Now().UnixNano(), "handleReadConn准备处理")
 			// 获取src
 			controlID := pact.ControlID
 			sessionID := string(pact.SessionID)
 			data := pact.Data
 
-			log.Println("读取Nat包：handleReadConn", sessionID, "长度为", len(data))
-
 			//退出
 			if controlID == PAIR_CONTROL_QUIT {
 				if c, ok := ExitChanMap[sessionID]; ok {
-					log.Println("发送退出信号")
+					logger.Info("发送退出信号")
 					c <- true
 				} else {
-					log.Println("在ExitChanMap里找不到Key为:", sessionID)
+					logger.Info("在ExitChanMap里找不到Key为:", sessionID)
 				}
 			} else {
 				if src, ok := ListenAcceptMap[sessionID]; ok {
 					len2, err2 := src.Write(data)
 					if err2 != nil || len2 <= 0 {
-						log.Println("源写入出错", err2.Error())
+						logger.Infof("源写入出错:%s", err2)
+					} else {
+						logger.Info(time.Now().UnixNano(), "源写入:", len2)
 					}
-					log.Println(time.Now().UnixNano(), "源写入:", len2)
+
 				} else {
-					log.Println("在Map里找不到Key为:", sessionID)
+					logger.Info("在Map里找不到Key为:", sessionID)
 				}
 
 			}

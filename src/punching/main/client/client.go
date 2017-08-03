@@ -1,5 +1,7 @@
-package main 
+package main
+
 import "punching/client"
+
 func main() {
 	client.Main()
 }

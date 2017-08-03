@@ -4,22 +4,19 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"punching/logger"
 	"syscall"
 	"time"
 )
-
 
 func MAKEWORD(low, high uint8) uint32 {
 	var ret uint16 = uint16(high)<<8 + uint16(low)
 	return uint32(ret)
 }
 
-
 type NetConn struct {
 	sock syscall.Handle
 }
-
-
 
 func (hole *NetConn) Close() {
 
@@ -28,13 +25,9 @@ func (hole *NetConn) Close() {
 
 }
 
-func (hole *NetConn) Bind(proto, addr string) (err error) {
+func (hole *NetConn) Bind(addr string) (err error) {
 
-	if "tcp" != proto {
-
-		log.Println("tcp != proto")
-		return
-	}
+	proto := "tcp"
 
 	var wsadata syscall.WSAData
 
@@ -80,7 +73,7 @@ func (hole *NetConn) Bind(proto, addr string) (err error) {
 
 func (hole *NetConn) Connect(addr [4]byte, port int) (err error) {
 	if hole.sock == 0 {
-		err = Error{"请先执行Bind()"}
+		err = fmt.Errorf("请先执行Bind()")
 		return
 	}
 	addrInet4 := syscall.SockaddrInet4{
@@ -89,6 +82,7 @@ func (hole *NetConn) Connect(addr [4]byte, port int) (err error) {
 	}
 
 	chConnect := make(chan error)
+	logger.Info(time.Now().UnixNano(), "准备连接对方")
 	go func() {
 		err = syscall.Connect(hole.sock, &addrInet4)
 		chConnect <- err

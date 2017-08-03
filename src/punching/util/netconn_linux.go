@@ -1,12 +1,10 @@
 package util
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
-
 	"punching/logger"
 	"syscall"
 	"time"
@@ -18,9 +16,7 @@ type NetConn struct {
 }
 
 func (hole *NetConn) Close() {
-
 	//if hole.conn != nil {
-	logger.Info("断开连接")
 	hole.conn.Close()
 	//}
 
@@ -70,7 +66,7 @@ func (hole *NetConn) Connect(addr [4]byte, port int) (err error) {
 
 	if hole.fd == 0 {
 
-		err = errors.New("请先调用Bind()函数")
+		err = fmt.Errorf("请先调用Bind()函数")
 		return
 	}
 
@@ -87,7 +83,7 @@ func (hole *NetConn) Connect(addr [4]byte, port int) (err error) {
 	}()
 
 	//有时候连接被远端抛弃的时候， syscall.Connect() 会很久才返回
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(60 * time.Second)
 	select {
 	case <-ticker.C:
 		err = fmt.Errorf("Connect timeout")

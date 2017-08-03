@@ -5,13 +5,12 @@ import (
 	"time"
 )
 
-
 // GenerateRandomPairKey 获取4位随机匹配码
 func GenerateRandomPairKey() string {
 	//97～122 小写字母
 	rndNums := GenerateRandomNumber(97, 122, 4)
 	key := ""
-	for num, _ := range rndNums {
+	for _, num := range rndNums {
 		key = key + string(byte(num))
 	}
 	return key
@@ -30,7 +29,7 @@ func GenerateRandomNumber(start int, end int, count int) []int {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for len(nums) < count {
 		//生成随机数
-		num := r.Intn((end - start)) + start
+		num := r.Intn(end-start) + start
 		//查重
 		exist := false
 		for _, v := range nums {
