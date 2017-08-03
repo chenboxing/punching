@@ -24,32 +24,32 @@ proxy: deps
 	go install  punching/main/proxy
 
 
-server_linux:
+server_linux: deps
 	GOOS=linux GOARCH=amd64 go install punching/main/server
-client_linux:
+client_linux: deps
 	GOOS=linux GOARCH=amd64 go install punching/main/client
-proxy_linux:
+proxy_linux: deps
 	GOOS=linux GOARCH=amd64 go install punching/main/proxy
 
-server_windows:
+server_windows: deps
 	GOOS=windows GOARCH=amd64 go install punching/main/server
-client_windows:
+client_windows: deps
 	GOOS=windows GOARCH=amd64 go install punching/main/client
-proxy_windows:
+proxy_windows: deps
 	GOOS=windows GOARCH=amd64 go install punching/main/proxy
 
-server_darwin:
+server_darwin: deps
 	GOOS=darwin GOARCH=amd64 go install punching/main/server
-client_darwin:
+client_darwin: deps
 	GOOS=darwin GOARCH=amd64 go install punching/main/client
-proxy_darwin:
+proxy_darwin: deps
 	GOOS=darwin GOARCH=amd64 go install punching/main/proxy
 
-server_arm:
+server_arm: deps
 	GOOS=linux GOARCH=arm  GOARM=5  go install punching/main/server
-client_arm:
+client_arm: deps
 	GOOS=linux GOARCH=arm  GOARM=5  go install punching/main/client
-proxy_arm:
+proxy_arm: deps
 	GOOS=linux GOARCH=arm  GOARM=5 go install punching/main/proxy
 
 

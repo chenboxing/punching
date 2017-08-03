@@ -1,0 +1,6 @@
+set GOPATH=%GOPATH%;%cd%
+go get  -d -v punching/...
+go fmt punching/...
+go install  punching/main/server
+go install punching/main/client
+go install  punching/main/proxy
