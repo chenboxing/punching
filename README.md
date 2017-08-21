@@ -4,8 +4,8 @@
 
 ### 项目介绍
    
-    ![image](https://github.com/chenboxing/punching/raw/bak/screenshots/architecture.png)
-   
+![构架图](https://github.com/chenboxing/punching/raw/bak/screenshots/architecture.png)
+
    
    如上图所示，在公网上部署一台跨网服务器，该服务器运行解析端(proxy), P2P客户端和服务端启动时向跨网解析端提交TCP连接请求，以便公网解析端根据请求，记录各自自连接时NAT地址，并告知对方的NAT地址。P2P客户端和服务端尝试同时连接，进行NAT穿透。在穿透成功后，P2P终端可以脱离跨网解析端独立进行TCP数据通讯，无需第三方数据转发。
    
@@ -55,5 +55,5 @@
   
   
 ### 依赖的第三方包  
-   github.com/cihub/seelog： 日志记录增加包
-   github.com/BurntSushi/toml： toml配置文件处理包
+   1. github.com/cihub/seelog： 日志记录增加包
+   2. github.com/BurntSushi/toml： toml配置文件处理包
